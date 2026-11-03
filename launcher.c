@@ -4,9 +4,11 @@
 #include <sys/shm.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/wait.h>
 
 #include "commun.h"
 #include "gestionnaire.c"
+#include "member.c"
 
 
 int main() {
@@ -86,6 +88,7 @@ int main() {
 
     /* ------------------------ */
     /* Nettoyage (attendre les wait pour tout les processus créé avant, donc gestionnaire + nbMembre) */
+    while(wait(NULL) > 0);
     /* ------------------------ */
 
     shmdt(shared);
