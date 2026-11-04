@@ -1,37 +1,6 @@
 #include "commun.h"
-
 #include <stdlib.h>
-
-
-
-void gestionnaire(int msqid, SharedData* sharedData) {
-    Message msg;
-    while(1) {
-        msgrcv(msqid, &msg, MSG_SIZE, ASK_REUNION, 0);
-        sharedData->meetings[msg.meeting.meetingId] = msg.meeting;
-
-        if(msg.meeting.priorityOrder == MINOR) {
-            if(tryBookMinorMeeting(sharedData, msg.meeting.meetingId)) {
-                // Prévenir les participants que le booking a réussi
-                notifyMeetingAccepted(msqid, sharedData, msg.meeting.meetingId);
-            }
-            else {
-                // Prévenir les participants que le booking a échoué
-                notifyMeetingRejected(msqid, sharedData, msg.meeting.meetingId);
-            }
-        }
-        else {
-            if(tryBookMajorMeeting(sharedData, msg.meeting.meetingId)) {
-                // Prévenir les participants que le booking a réussi
-                notifyMeetingAccepted(msqid, sharedData, msg.meeting.meetingId);
-            }
-            else {
-                // Prévenir les participants que le booking a échoué
-                notifyMeetingRejected(msqid, sharedData, msg.meeting.meetingId);
-            }
-        }
-    }
-}
+#include <sys/msg.h>
 
 
 
@@ -355,11 +324,49 @@ void notifyMeetingRejected(int msqid, SharedData* sharedData, int idMeeting) {
 
     for(int i=0 ; i<meeting->nbParticipants ; i++) {
         Message msg;
-
         msg.type = meeting->participantIds[i];
         msg.requestType = NOTIFY_BOOKING_FAILED;
         msg.meeting = *meeting;
 
         msgsnd(msqid, &msg, MSG_SIZE, 0);
+    }
+}
+
+
+
+
+
+
+
+
+
+/*------------------------- Fonction principale -----------------------------------------*/
+
+void gestionnaire(int msqid, SharedData* sharedData) {
+    Message msg;
+    while(1) {
+        msgrcv(msqid, &msg, MSG_SIZE, ASK_REUNION, 0);
+        sharedData->meetings[msg.meeting.meetingId] = msg.meeting;
+
+        if(msg.meeting.priorityOrder == MINOR) {
+            if(tryBookMinorMeeting(sharedData, msg.meeting.meetingId)) {
+                // Prévenir les participants que le booking a réussi
+                notifyMeetingAccepted(msqid, sharedData, msg.meeting.meetingId);
+            }
+            else {
+                // Prévenir les participants que le booking a échoué
+                notifyMeetingRejected(msqid, sharedData, msg.meeting.meetingId);
+            }
+        }
+        else {
+            if(tryBookMajorMeeting(sharedData, msg.meeting.meetingId)) {
+                // Prévenir les participants que le booking a réussi
+                notifyMeetingAccepted(msqid, sharedData, msg.meeting.meetingId);
+            }
+            else {
+                // Prévenir les participants que le booking a échoué
+                notifyMeetingRejected(msqid, sharedData, msg.meeting.meetingId);
+            }
+        }
     }
 }

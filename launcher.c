@@ -30,11 +30,11 @@ int main() {
     shared->nbMeetings = 0;
     shared->nextMeetingId = 0;
 
-    shared->rooms[0].roomId = ROOM_A;
+    shared->rooms[0].roomId = ROOM_A_ID;
     shared->rooms[0].capacity = SIZE_ROOM_A;
     shared->rooms[0].name = 'A';
 
-    shared->rooms[1].roomId = ROOM_B;
+    shared->rooms[1].roomId = ROOM_B_ID;
     shared->rooms[1].capacity = SIZE_ROOM_B;
     shared->rooms[1].name = 'B';
 
@@ -65,23 +65,23 @@ int main() {
         int nbMembers = MIN_NB_MEMBERS + rand() % (MAX_NB_MEMBRES - MIN_NB_MEMBERS + 1);
 
         // Création + affectation à l'équipe des nouveaux membres (= processus)
-        for(int member=0 ; member<nbMembers ; member++) {
-            shared->teams[team].members[member].memberId = nextMemberId++;
-            shared->teams[team].members[member].teamId = team + 1;
+        for(int Member=0 ; Member<nbMembers ; Member++) {
+            shared->teams[team].members[Member].memberId = nextMemberId++;
+            shared->teams[team].members[Member].teamId = team + 1;
 
             // Initalisation de son agenda à FREE toute la journée
             for(int h=0 ; h<NB_HOURES_IN_A_DAY ; h++) {
-                shared->teams[team].members[member].disponibilites[h] = FREE_SLOT;
+                shared->teams[team].members[Member].disponibilites[h] = FREE_SLOT;
             }
 
             // Lancement du processus / membre !
             pid_t pid = fork();
             if(pid == 0) {
-                member(msqid, shared, shared->teams[team].members[member].memberId);
+                member(msqid, shared, shared->teams[team].members[Member].memberId);
                 exit(EXIT_SUCCESS);
             }
 
-            shared->teams[team].members[member].pid = pid;
+            shared->teams[team].members[Member].pid = pid;
         }
     }
 
