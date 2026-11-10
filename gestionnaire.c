@@ -5,23 +5,15 @@
 #include <string.h>
 #include <sys/msg.h>
 
+// Enregistrer un log dans la mémoire partagée
 static void addLog(SharedData* sharedData, const char* text) {
-    if(sharedData->nbLogs < 0)
-        sharedData->nbLogs = 0;
-
-    if(sharedData->nbLogs >= MAX_LOGS) {
-        sharedData->nbLogs = MAX_LOGS;
-        memmove(&sharedData->logs[0], &sharedData->logs[1],
-                sizeof(sharedData->logs[0]) * (MAX_LOGS - 1));
-        sharedData->nbLogs--;
-    }
-
     snprintf(sharedData->logs[sharedData->nbLogs].message,
              sizeof(sharedData->logs[sharedData->nbLogs].message),
              "%s", text);
     sharedData->nbLogs++;
 }
 
+// Notifier les participants d'une réunion de son état (acceptée, refusée, déplacée ou annulée)
 static void notifyParticipants(int msqid, const Meeting* meeting, MsgRequestType type) {
     int count = meeting->nbParticipants;
     if(count < 0)
@@ -29,6 +21,7 @@ static void notifyParticipants(int msqid, const Meeting* meeting, MsgRequestType
     if(count > SIZE_BIGGEST_ROOM)
         count = SIZE_BIGGEST_ROOM;
 
+    // Envoyer un message à chaque participant
     for(int i = 0; i < count; i++) {
         Message msg = {0};
         msg.type = meeting->participantIds[i];
@@ -91,9 +84,10 @@ void unBookMeeting(SharedData* pSharedData, int idMeeting) {
 
 
 
-// Essaye de book un minor meeting
-// Si pas de start spécifié, commencer la recherche à 8H
-// Si pas de créneau possible, renvoyer 0. Si ça va, renvoyer 1
+// Réserve une réunion mineure dans le premier créneau disponible.
+// La recherche commence à l'heure demandée, ou à 8 h si aucune heure n'est précisée.
+// Pour chaque heure, les salles sont essayées avant de passer à l'heure suivante.
+// Retourne 1 si la réunion est réservée, sinon 0.
 int tryBookMinorMeeting(SharedData* pSharedData, int idMeeting) {
     Meeting* meeting = &pSharedData->meetings[idMeeting];
     int firstStart = (meeting->start == -1) ? 0 : meeting->start;
@@ -103,11 +97,12 @@ int tryBookMinorMeeting(SharedData* pSharedData, int idMeeting) {
         for(int i=0 ; i<NB_ROOM ; i++) {
             Room* room = &pSharedData->rooms[i];
 
+            // Si la salle est trop petite, passer à la suivante
             if(room->capacity < meeting->nbParticipants) continue;
 
             int available = 1;
 
-            // Check la dispo de la salle
+            // Vérifier que la salle est libre pendant toute la durée demandée.
             for(int j=start ; j<start+meeting->duration ; j++) {
                 if(room->disponibilites[j] != FREE_SLOT) {
                     available = 0;
@@ -116,14 +111,13 @@ int tryBookMinorMeeting(SharedData* pSharedData, int idMeeting) {
             }
             if(!available) continue;
 
-            // Check les dispo des particpants
+            // Vérifier que chaque participant existe et est libre sur ce créneau.
             for(int j=0 ; j<meeting->nbParticipants ; j++) {
                 Member* member = getMemberById(pSharedData, meeting->participantIds[j]);
                 if(member == NULL) {
                     available = 0;
                     break;
                 }
-
                 for(int k=start ; k<start+meeting->duration ; k++) {
                     if(member->disponibilites[k] != FREE_SLOT) {
                         available = 0;
@@ -133,16 +127,17 @@ int tryBookMinorMeeting(SharedData* pSharedData, int idMeeting) {
                 if(!available) break;
             }
 
-            // Si tout est okay, on réserve la salle et màj son calendrier ainsi que celui des particpants
+            // Réserver la salle et inscrire la réunion dans les agendas des participants.
             if(available) {
-
                 meeting->start = start;
                 meeting->roomId = room->roomId;
 
+                // Mettre à jour le calendrier de la salle
                 for(int j=start ; j<start+meeting->duration ; j++) {
                     room->disponibilites[j] = meeting->meetingId;
                 }
 
+                // Mettre à jour le calendrier des participants
                 for(int j=0 ; j<meeting->nbParticipants ; j++) {
 
                     Member* member = getMemberById(
@@ -163,6 +158,8 @@ int tryBookMinorMeeting(SharedData* pSharedData, int idMeeting) {
     return 0;
 }
 
+
+// Ajouter un meetingId à la liste meetingsIdToMove si il n'y est pas déjà
 static int addMeetingToMove(int meetingIds[], int* count, int meetingId) {
     for(int i = 0; i < *count; i++) {
         if(meetingIds[i] == meetingId)
@@ -177,19 +174,18 @@ static int addMeetingToMove(int meetingIds[], int* count, int meetingId) {
 }
 
 
-// Essayer de book un major meeting
-// Idem que pour minor meeting par rapport au start
-/* Si pas de créneaux libre au start souhaité
-    --> Si seulement des minors sur le créneaux
-        --> Placer la major sur ce créneaux
-        --> Déplacer les minors à d'autres moments de la journée (si pas possible, supprimer la/les minors et prévenir les membres)
-    --> Si des majors sur le crénaux
-        --> Recommencer la recherche à la fin de ce dernier
-*/
+// Réserve une réunion majeure en privilégiant l'heure demandée.
+// À chaque heure, essaie les salles dans l'ordre avant d'avancer à l'heure suivante.
+// Une réunion majeure déjà planifiée n'est jamais déplacée : la recherche continue
+// dans l'autre salle, puis aux heures suivantes.
+// Les réunions mineures qui bloquent la salle ou un participant sont libérées,
+// puis replacées après la réservation de la majeure. Une mineure impossible à
+// replacer est annulée et ses participants sont notifiés.
+// Retourne 1 si la majeure est réservée, sinon 0.
 int tryBookMajorMeeting(int msqid, SharedData* pSharedData, int idMeeting) {
     Meeting* meeting = &pSharedData->meetings[idMeeting];
 
-    // Si pas de start spécifié, commencer à 8H
+    // Utiliser l'heure demandée, ou commencer à 8 h si elle n'est pas précisée.
     int start = (meeting->start == -1) ? 0 : meeting->start;
 
     // Pour chaque heure, essayer toutes les salles avant de passer à la suivante.
@@ -197,7 +193,7 @@ int tryBookMajorMeeting(int msqid, SharedData* pSharedData, int idMeeting) {
         for(int r=0 ; r<NB_ROOM ; r++) {
             Room* room = &pSharedData->rooms[r];
 
-            // Si salle trop petite, essayer la suivante
+            // Ignorer les salles dont la capacité est insuffisante.
             if(room->capacity < meeting->nbParticipants) continue;
                 
             int meetingsIdToMove[MAX_AMOUNT_MEETING];
@@ -206,10 +202,10 @@ int tryBookMajorMeeting(int msqid, SharedData* pSharedData, int idMeeting) {
             int possible = 1;
 
             for(int h=start ; h<start+meeting->duration ; h++) {
-                // Id du meeting (potentiellement) bloquant
+                // Identifier la réunion qui occupe éventuellement cette heure.
                 int blockingMeetingId = room->disponibilites[h];
 
-                // Si le slot est free, passer à l'itération / heure suivante
+                // Une heure libre ne crée aucun conflit dans cette salle.
                 if(blockingMeetingId == FREE_SLOT) continue;
                 if(blockingMeetingId < 0 ||
                    blockingMeetingId >= MAX_AMOUNT_MEETING) {
@@ -217,7 +213,7 @@ int tryBookMajorMeeting(int msqid, SharedData* pSharedData, int idMeeting) {
                     break;
                 }
 
-                // Récupérer le meeting bloquant
+                // Une réunion majeure reste prioritaire; essayer un autre créneau.
                 Meeting* blockingMeeting = &pSharedData->meetings[blockingMeetingId];
 
                 // Une autre majeure bloque cette salle, mais pas forcément l'autre.
@@ -233,7 +229,8 @@ int tryBookMajorMeeting(int msqid, SharedData* pSharedData, int idMeeting) {
                 }
             }
 
-            // Une mineure peut aussi bloquer un participant dans l'autre salle.
+            // Un participant peut être occupé par une mineure dans l'autre salle.
+            // Ajouter aussi cette réunion à la liste des mineures à replacer.
             for(int p=0 ; p<meeting->nbParticipants && possible ; p++) {
                 Member* member = getMemberById(pSharedData, meeting->participantIds[p]);
                 if(member == NULL) {
@@ -272,14 +269,15 @@ int tryBookMajorMeeting(int msqid, SharedData* pSharedData, int idMeeting) {
 
             Meeting meetingsToMove[MAX_AMOUNT_MEETING];
 
-            // Libérer les mineures qui bloquent le créneau de la réunion majeure.
+            // Conserver les anciennes informations, puis libérer les créneaux
+            // des réunions mineures avant de réserver la majeure.
             for(int m=0 ; m<nbMeetingsToMove ; m++) {
                 meetingsToMove[m] = pSharedData->meetings[meetingsIdToMove[m]];
                 unBookMeeting(pSharedData, meetingsIdToMove[m]);
                 pSharedData->meetings[meetingsIdToMove[m]].roomId = NO_ROOM;
             }
 
-            // Puis booker la salle pour la major
+            // Réserver la salle et les agendas des participants pour la majeure.
             meeting->start = start;
             meeting->roomId = room->roomId;
 
@@ -287,7 +285,6 @@ int tryBookMajorMeeting(int msqid, SharedData* pSharedData, int idMeeting) {
                 room->disponibilites[h] = meeting->meetingId;
             }
 
-            // Maj le calendrier de tous les participants
             for(int p=0 ; p<meeting->nbParticipants ; p++) {
                 Member* member = getMemberById(pSharedData, meeting->participantIds[p]);
 
@@ -298,7 +295,8 @@ int tryBookMajorMeeting(int msqid, SharedData* pSharedData, int idMeeting) {
                 }
             }
 
-            // Replacer les réunions mineures et notifier les participants du résultat.
+            // Rechercher un nouveau créneau pour chaque mineure déplacée.
+            // Notifier les participants et journaliser le déplacement ou l'annulation.
             for(int m=0 ; m<nbMeetingsToMove ; m++) {
                 int movedId = meetingsIdToMove[m];
 
@@ -382,21 +380,26 @@ void notifyMeetingRejected(int msqid, SharedData* sharedData, int idMeeting) {
 /*------------------------- Fonction principale -----------------------------------------*/
 
 void gestionnaire(int msqid, SharedData* sharedData) {
+    // Boucle principale du gestionnaire
     Message msg;
     while(1) {
+        // Récupérer le message du membre (bloquant)
         if(msgrcv(msqid, &msg, MSG_SIZE, MANAGER_REQUEST_TYPE, 0) == -1) {
             perror("msgrcv");
             continue;
         }
 
+        // Si le message est une demande de suppression de réunion
         if(msg.requestType == DELETE_MEETING) {
             int meetingId = msg.meeting.meetingId;
+            // Vérifier que la réunion existe et qu'elle est bien bookée dans une salle
             if(meetingId < 0 || meetingId >= MAX_AMOUNT_MEETING ||
                sharedData->meetings[meetingId].roomId == NO_ROOM) {
                 addLog(sharedData, "Suppression impossible : reunion introuvable");
                 continue;
             }
 
+            // Supprimer la réunion et notifier les participants
             Meeting* meeting = &sharedData->meetings[meetingId];
             unBookMeeting(sharedData, meetingId);
             notifyMeetingCancelled(msqid, sharedData, meetingId);
@@ -410,12 +413,16 @@ void gestionnaire(int msqid, SharedData* sharedData) {
             continue;
         }
 
+        // Si le message est une demande de stop du gestionnaire, on quitte la boucle
         if(msg.requestType == STOP_MANAGER)
             break;
 
+        // Si le message n'est pas une demande de réunion, on ignore
         if(msg.requestType != ASK_REUNION)
             continue;
 
+        // Si donc c'est une demande de réunion, on essaye de la booker
+        // Vérifier les paramètres de la réunion demandée
         if(msg.meeting.nbParticipants < 1 ||
            msg.meeting.nbParticipants > SIZE_BIGGEST_ROOM ||
            (msg.meeting.priorityOrder != MINOR &&
@@ -430,6 +437,7 @@ void gestionnaire(int msqid, SharedData* sharedData) {
             continue;
         }
 
+        // Vérifier qu'on a pas atteint le nombre max de réunions
         if(sharedData->nextMeetingId < 0 ||
            sharedData->nextMeetingId >= MAX_AMOUNT_MEETING) {
             notifyParticipants(msqid, &msg.meeting, NOTIFY_BOOKING_FAILED);
@@ -437,16 +445,19 @@ void gestionnaire(int msqid, SharedData* sharedData) {
             continue;
         }
 
+        // On assigne un ID à la réunion et on l'ajoute dans la mémoire partagée
         msg.meeting.meetingId = sharedData->nextMeetingId++;
         msg.meeting.roomId = NO_ROOM;
         sharedData->meetings[msg.meeting.meetingId] = msg.meeting;
 
+        // On book la réunion selon sa priorité
         int booked;
         if(msg.meeting.priorityOrder == MINOR)
             booked = tryBookMinorMeeting(sharedData, msg.meeting.meetingId);
         else
             booked = tryBookMajorMeeting(msqid, sharedData, msg.meeting.meetingId);
 
+        // Notifier les participants du résultat et ajouter un log
         char logMessage[128];
         if(booked) {
             notifyMeetingAccepted(msqid, sharedData, msg.meeting.meetingId);

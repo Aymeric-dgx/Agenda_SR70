@@ -13,6 +13,7 @@ typedef enum {
     PAGE_TEAMS
 } Page;
 
+// Regroupe l'etat d'affichage et les choix en cours dans les formulaires.
 typedef struct {
     Page page;
     int selectedRoom;
@@ -29,6 +30,7 @@ typedef struct {
     char status[128];
 } UIState;
 
+// Convertit un texte en texture SDL, l'affiche, puis libere les ressources temporaires.
 static void drawText(SDL_Renderer* renderer, TTF_Font* font, const char* text, int x, int y) {
     if(font == NULL || text == NULL)
         return;
@@ -53,6 +55,8 @@ static void drawText(SDL_Renderer* renderer, TTF_Font* font, const char* text, i
     SDL_FreeSurface(surface);
 }
 
+// Les fonctions get*Rect calculent les zones d'affichage et de clic
+// a partir de la taille courante de la fenetre.
 static SDL_Rect getHomeButtonRect(int width, int height) {
     SDL_Rect rect = {width / 50, height / 50, width / 8, height / 14};
     return rect;
@@ -103,6 +107,7 @@ static SDL_Rect getDeleteButtonRect(int width, int height) {
     return rect;
 }
 
+// Dessine un bouton commun aux differentes pages.
 static void drawButton(SDL_Renderer* renderer, TTF_Font* font, SDL_Rect rect,
                        const char* label, int selected) {
     if(selected)
@@ -116,6 +121,7 @@ static void drawButton(SDL_Renderer* renderer, TTF_Font* font, SDL_Rect rect,
     drawText(renderer, font, label, rect.x + rect.w / 10, rect.y + rect.h / 4);
 }
 
+// Affiche les boutons de navigation et indique la page active.
 static void drawNavigation(SDL_Renderer* renderer, TTF_Font* font, Page page,
                            int width, int height) {
     SDL_Rect home = getHomeButtonRect(width, height);
@@ -127,6 +133,8 @@ static void drawNavigation(SDL_Renderer* renderer, TTF_Font* font, Page page,
     drawButton(renderer, font, history, "Historique", page == PAGE_HISTORY);
 }
 
+// Affiche les heures et les reservations d'une salle.
+// Les couleurs distinguent les reunions MAJOR des reunions MINOR.
 static void drawRoomAgenda(SDL_Renderer* renderer, TTF_Font* font,
                            SharedData* sharedData, int roomIndex,
                            int width, int height) {
@@ -177,6 +185,7 @@ static void drawRoomAgenda(SDL_Renderer* renderer, TTF_Font* font,
     }
 }
 
+// Affiche les informations du creneau choisi ou indique qu'il est libre.
 static void drawSelectedSlot(SDL_Renderer* renderer, TTF_Font* font,
                              SharedData* sharedData, UIState* state,
                              int width, int height) {
@@ -235,6 +244,7 @@ static void drawSelectedSlot(SDL_Renderer* renderer, TTF_Font* font,
                "SUPPRIMER", 0);
 }
 
+// La page d'accueil rassemble les agendas des salles et les details selectionnes.
 static void drawHomePage(SDL_Renderer* renderer, TTF_Font* font,
                          SharedData* sharedData, UIState* state,
                          int width, int height) {
@@ -266,6 +276,7 @@ static SDL_Rect getMemberButtonRect(int memberIndex, int width, int height) {
     return rect;
 }
 
+// Affiche la liste des equipes et, pour l'equipe selectionnee, ses membres.
 static void drawTeamsPage(SDL_Renderer* renderer, TTF_Font* font,
                           SharedData* sharedData, UIState* state,
                           int width, int height) {
@@ -320,6 +331,8 @@ static void drawTeamsPage(SDL_Renderer* renderer, TTF_Font* font,
                  memberPanel.y + memberPanel.h / 12);
 }
 
+// Affiche les evenements les plus recents en premier.
+// historyScroll est borne au nombre de lignes qui peuvent etre affichees.
 static void drawHistoryPage(SDL_Renderer* renderer, TTF_Font* font,
                             SharedData* sharedData, UIState* state,
                             int width, int height) {
@@ -363,6 +376,7 @@ static void drawHistoryPage(SDL_Renderer* renderer, TTF_Font* font,
     }
 }
 
+// Indique si un membre fait deja partie de la demande en cours.
 static int hasParticipant(const UIState* state, int memberId) {
     for(int i = 0; i < state->participantCount; i++) {
         if(state->participantIds[i] == memberId)
@@ -371,6 +385,8 @@ static int hasParticipant(const UIState* state, int memberId) {
     return 0;
 }
 
+// Les fonctions suivantes calculent les zones des controles du formulaire
+// de demande de reunion.
 static SDL_Rect getParticipantButtonRect(int index, int width, int height) {
     int step = width * 9 / 100;
     int column = index % 5;
@@ -446,6 +462,7 @@ static SDL_Rect getBackButtonRect(int width, int height) {
     return rect;
 }
 
+// Affiche l'agenda d'un membre, avec le meme code couleur que l'agenda des salles.
 static void drawMemberAgenda(SDL_Renderer* renderer, TTF_Font* font,
                              SharedData* sharedData, Member* member,
                              int width, int height) {
@@ -495,6 +512,7 @@ static void drawMemberAgenda(SDL_Renderer* renderer, TTF_Font* font,
     }
 }
 
+// Affiche l'agenda du membre selectionne et les options de demande de reunion.
 static void drawMemberPage(SDL_Renderer* renderer, TTF_Font* font,
                            SharedData* sharedData, UIState* state,
                            int width, int height) {
@@ -586,10 +604,12 @@ static void drawMemberPage(SDL_Renderer* renderer, TTF_Font* font,
                  width / 20, height * 87 / 100);
 }
 
+// Met a jour le message de retour affiche dans le formulaire.
 static void setStatus(UIState* state, const char* text) {
     snprintf(state->status, sizeof(state->status), "%s", text);
 }
 
+// Initialise une nouvelle demande avec le membre courant comme participant.
 static void resetMeetingForm(UIState* state, int memberId) {
     state->priority = MINOR;
     state->duration = 1;
@@ -599,12 +619,14 @@ static void resetMeetingForm(UIState* state, int memberId) {
     state->status[0] = '\0';
 }
 
+// Retire un participant en decalant les identifiants suivants dans le tableau.
 static void removeParticipant(UIState* state, int participantIndex) {
     for(int i = participantIndex; i < state->participantCount - 1; i++)
         state->participantIds[i] = state->participantIds[i + 1];
     state->participantCount--;
 }
 
+// Ajoute ou retire un participant; le membre qui porte la demande reste inclus.
 static void toggleParticipant(UIState* state, int memberId) {
     for(int i = 0; i < state->participantCount; i++) {
         if(state->participantIds[i] == memberId) {
@@ -618,6 +640,7 @@ static void toggleParticipant(UIState* state, int memberId) {
         state->participantIds[state->participantCount++] = memberId;
 }
 
+// Transmet la demande au gestionnaire via requestMeeting et affiche le resultat d'envoi.
 static int submitMeetingRequest(int msqid, UIState* state) {
     if(state->participantCount < 1 ||
        requestMeeting(msqid, state->selectedMemberId, state->priority,
@@ -631,6 +654,8 @@ static int submitMeetingRequest(int msqid, UIState* state) {
     return 0;
 }
 
+// Envoie une commande de suppression au gestionnaire.
+// La suppression effective et la mise a jour des agendas sont gerees par celui-ci.
 static void deleteSelectedMeeting(int msqid, SharedData* sharedData,
                                   UIState* state) {
     if(state->selectedRoom < 0 || state->selectedRoom >= NB_ROOM ||
@@ -659,6 +684,7 @@ static void deleteSelectedMeeting(int msqid, SharedData* sharedData,
     setStatus(state, "Suppression demandee");
 }
 
+// Traduit les clics souris en navigation ou en actions sur la page courante.
 static void handleClick(SDL_Event* event, int msqid,
                         SharedData* sharedData, UIState* state,
                         int width, int height) {
@@ -684,6 +710,8 @@ static void handleClick(SDL_Event* event, int msqid,
         return;
     }
 
+    // Sur l'accueil, un clic selectionne un creneau ou demande la suppression
+    // de la reunion affichee dans le panneau de details.
     if(state->page == PAGE_HOME) {
         SDL_Rect deleteButton = getDeleteButtonRect(width, height);
         if(state->selectedRoom >= 0 &&
@@ -706,6 +734,7 @@ static void handleClick(SDL_Event* event, int msqid,
         return;
     }
 
+    // La selection d'un membre initialise son formulaire avant d'ouvrir sa page.
     if(state->page == PAGE_TEAMS) {
         for(int teamIndex = 0; teamIndex < NB_EQUIPES; teamIndex++) {
             SDL_Rect teamButton = getTeamButtonRect(teamIndex, width, height);
@@ -753,6 +782,7 @@ static void handleClick(SDL_Event* event, int msqid,
     if(member == NULL)
         return;
 
+    // Les controles suivants modifient les parametres de la demande de reunion.
     for(int option = 0; option < 2; option++) {
         SDL_Rect button = getPriorityButtonRect(option, width, height);
         if(SDL_PointInRect(&mouse, &button)) {
@@ -765,6 +795,8 @@ static void handleClick(SDL_Event* event, int msqid,
         SDL_Rect button = getDurationButtonRect(option, width, height);
         if(SDL_PointInRect(&mouse, &button)) {
             state->duration = option + 1;
+            // Conserve un debut valide si la nouvelle duree ne tient plus
+            // dans la journee a partir de l'heure actuellement choisie.
             if(state->start != UNSPECIFIED_START &&
                state->start > NB_HOURES_IN_A_DAY - state->duration)
                 state->start = NB_HOURES_IN_A_DAY - state->duration;
@@ -835,6 +867,8 @@ static void handleClick(SDL_Event* event, int msqid,
         submitMeetingRequest(msqid, state);
 }
 
+// Initialise SDL, execute la boucle d'evenements et de rendu, puis libere
+// toutes les ressources graphiques avant de terminer le processus UI.
 void ui(int msqid, SharedData* sharedData) {
     if(SDL_Init(SDL_INIT_VIDEO) != 0) {
         fprintf(stderr, "Impossible d'initialiser SDL : %s\n", SDL_GetError());
@@ -906,6 +940,7 @@ void ui(int msqid, SharedData* sharedData) {
     state.start = UNSPECIFIED_START;
 
     int running = 1;
+    // Chaque iteration traite les evenements recus puis redessine la page active.
     while(running) {
         SDL_GetWindowSize(window, &width, &height);
         SDL_Event event;
@@ -941,6 +976,7 @@ void ui(int msqid, SharedData* sharedData) {
                 break;
         }
 
+        // Presente a l'ecran l'image construite pour cette iteration.
         SDL_RenderPresent(renderer);
     }
 

@@ -42,7 +42,6 @@ typedef enum {
 
     NOTIFY_MEETING_MOVED,
     NOTIFY_MEETING_CANCELLED
-
 } MsgRequestType;
 
 

@@ -73,7 +73,7 @@ int main() {
             // Lancement du processus / membre
             pid_t pid = fork();
             if(pid == 0) {
-                //member(msqid, shared, shared->teams[team].members[Member].memberId);
+                member(msqid, shared, shared->teams[team].members[Member].memberId);
                 exit(EXIT_SUCCESS);
             }
 
@@ -100,7 +100,7 @@ int main() {
     // Attente de la fin de l'UI avant de terminer le programme
     waitpid(uiPid, NULL, 0);
 
-    // Shutdown les membres
+    // Shutdown les membres (si le wait échoue, tentative de kill)
     for(int team = 0; team < NB_EQUIPES; team++) {
         for(int member = 0; member < MAX_NB_MEMBRES; member++) {
             pid_t memberPid = shared->teams[team].members[member].pid;
@@ -121,7 +121,7 @@ int main() {
     waitpid(gestionnairePid, NULL, 0);
 
 
-    // Nettoyage (attendre les wait pour tout les processus créé avant, donc gestionnaire + nbMembre)
+    // Nettoyage (au cas où certains membres n'ont pas été terminés correctement)
     while(wait(NULL) > 0);
 
 
