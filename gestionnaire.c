@@ -98,15 +98,13 @@ int tryBookMinorMeeting(SharedData* pSharedData, int idMeeting) {
     Meeting* meeting = &pSharedData->meetings[idMeeting];
     int firstStart = (meeting->start == -1) ? 0 : meeting->start;
 
-    // Pour chaque room (commencer par la salle A, la plus petite)
-    for(int i=0 ; i<NB_ROOM ; i++) {
-        Room* room = &pSharedData->rooms[i];
+    // Comparer les salles pour chaque heure avant de passer à l'heure suivante.
+    for(int start=firstStart ; start<=NB_HOURES_IN_A_DAY-meeting->duration ; start++) {
+        for(int i=0 ; i<NB_ROOM ; i++) {
+            Room* room = &pSharedData->rooms[i];
 
-        // Si capacité insuffisante, essayer la prochaine room
-        if(room->capacity < meeting->nbParticipants) continue;
+            if(room->capacity < meeting->nbParticipants) continue;
 
-        // Essayer de trouver un créneau qui correspond à la durée de la réunion
-        for(int start=firstStart ; start<=NB_HOURES_IN_A_DAY-meeting->duration ; start++) {
             int available = 1;
 
             // Check la dispo de la salle
@@ -165,6 +163,18 @@ int tryBookMinorMeeting(SharedData* pSharedData, int idMeeting) {
     return 0;
 }
 
+static int addMeetingToMove(int meetingIds[], int* count, int meetingId) {
+    for(int i = 0; i < *count; i++) {
+        if(meetingIds[i] == meetingId)
+            return 1;
+    }
+
+    if(*count >= MAX_AMOUNT_MEETING)
+        return 0;
+
+    meetingIds[(*count)++] = meetingId;
+    return 1;
+}
 
 
 // Essayer de book un major meeting
@@ -179,17 +189,11 @@ int tryBookMinorMeeting(SharedData* pSharedData, int idMeeting) {
 int tryBookMajorMeeting(int msqid, SharedData* pSharedData, int idMeeting) {
     Meeting* meeting = &pSharedData->meetings[idMeeting];
 
-    if(tryBookMinorMeeting(pSharedData, idMeeting))
-        return 1;
-
     // Si pas de start spécifié, commencer à 8H
     int start = (meeting->start == -1) ? 0 : meeting->start;
 
-    // Pour chaque heure à partir du start...
-    while(start <= NB_HOURES_IN_A_DAY-meeting->duration) {
-        int restartSearch = 0;
-
-        // Essayer sur chaque room...
+    // Pour chaque heure, essayer toutes les salles avant de passer à la suivante.
+    for(; start <= NB_HOURES_IN_A_DAY-meeting->duration; start++) {
         for(int r=0 ; r<NB_ROOM ; r++) {
             Room* room = &pSharedData->rooms[r];
 
@@ -201,48 +205,70 @@ int tryBookMajorMeeting(int msqid, SharedData* pSharedData, int idMeeting) {
 
             int possible = 1;
 
-            // Pour chaque horaire...
             for(int h=start ; h<start+meeting->duration ; h++) {
                 // Id du meeting (potentiellement) bloquant
                 int blockingMeetingId = room->disponibilites[h];
 
                 // Si le slot est free, passer à l'itération / heure suivante
                 if(blockingMeetingId == FREE_SLOT) continue;
+                if(blockingMeetingId < 0 ||
+                   blockingMeetingId >= MAX_AMOUNT_MEETING) {
+                    possible = 0;
+                    break;
+                }
 
                 // Récupérer le meeting bloquant
                 Meeting* blockingMeeting = &pSharedData->meetings[blockingMeetingId];
 
-                // Si le meeting bloquant est un major, essayer à partir de la fin de ce dernier
+                // Une autre majeure bloque cette salle, mais pas forcément l'autre.
                 if(blockingMeeting->priorityOrder == MAJOR) {
-                    start = blockingMeeting->start + blockingMeeting->duration;
                     possible = 0;
-                    restartSearch = 1;
                     break;
                 }
 
-                // Vérifier que cette réunion n'est pas déjà dans la liste
-                // (une même réunion peut occuper plusieurs slots horaires)
-                int alreadyStored = 0;
-
-                for(int m=0 ; m<nbMeetingsToMove ; m++) {
-                    // Si déjà enregistrée comme réunion à déplacer
-                    if(meetingsIdToMove[m] == blockingMeetingId) {
-                        alreadyStored = 1;
-                        break;
-                    }
-                }
-
-                // Si pas encore enregistrée, l'ajouter à la liste
-                if(!alreadyStored) {
-                    meetingsIdToMove[nbMeetingsToMove++] = blockingMeetingId;
+                if(!addMeetingToMove(meetingsIdToMove, &nbMeetingsToMove,
+                                     blockingMeetingId)) {
+                    possible = 0;
+                    break;
                 }
             }
 
-            if(restartSearch)
-                break;
+            // Une mineure peut aussi bloquer un participant dans l'autre salle.
+            for(int p=0 ; p<meeting->nbParticipants && possible ; p++) {
+                Member* member = getMemberById(pSharedData, meeting->participantIds[p]);
+                if(member == NULL) {
+                    possible = 0;
+                    break;
+                }
 
-            if(!possible)
-                continue;
+                for(int h=start ; h<start+meeting->duration ; h++) {
+                    int blockingMeetingId = member->disponibilites[h];
+                    if(blockingMeetingId == FREE_SLOT ||
+                       blockingMeetingId == meeting->meetingId)
+                        continue;
+
+                    if(blockingMeetingId < 0 ||
+                       blockingMeetingId >= MAX_AMOUNT_MEETING) {
+                        possible = 0;
+                        break;
+                    }
+
+                    Meeting* blockingMeeting =
+                        &pSharedData->meetings[blockingMeetingId];
+                    if(blockingMeeting->priorityOrder == MAJOR) {
+                        possible = 0;
+                        break;
+                    }
+
+                    if(!addMeetingToMove(meetingsIdToMove, &nbMeetingsToMove,
+                                         blockingMeetingId)) {
+                        possible = 0;
+                        break;
+                    }
+                }
+            }
+
+            if(!possible) continue;
 
             Meeting meetingsToMove[MAX_AMOUNT_MEETING];
 
@@ -303,8 +329,6 @@ int tryBookMajorMeeting(int msqid, SharedData* pSharedData, int idMeeting) {
             return 1;
         }
 
-        if(!restartSearch)
-            break;
     }
 
     return 0;
