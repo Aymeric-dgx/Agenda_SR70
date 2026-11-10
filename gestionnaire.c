@@ -1,7 +1,43 @@
 #include "commun.h"
+#include "modules.h"
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/msg.h>
 
+static void addLog(SharedData* sharedData, const char* text) {
+    if(sharedData->nbLogs < 0)
+        sharedData->nbLogs = 0;
+
+    if(sharedData->nbLogs >= MAX_LOGS) {
+        sharedData->nbLogs = MAX_LOGS;
+        memmove(&sharedData->logs[0], &sharedData->logs[1],
+                sizeof(sharedData->logs[0]) * (MAX_LOGS - 1));
+        sharedData->nbLogs--;
+    }
+
+    snprintf(sharedData->logs[sharedData->nbLogs].message,
+             sizeof(sharedData->logs[sharedData->nbLogs].message),
+             "%s", text);
+    sharedData->nbLogs++;
+}
+
+static void notifyParticipants(int msqid, const Meeting* meeting, MsgRequestType type) {
+    int count = meeting->nbParticipants;
+    if(count < 0)
+        count = 0;
+    if(count > SIZE_BIGGEST_ROOM)
+        count = SIZE_BIGGEST_ROOM;
+
+    for(int i = 0; i < count; i++) {
+        Message msg = {0};
+        msg.type = meeting->participantIds[i];
+        msg.requestType = type;
+        msg.meeting = *meeting;
+        if(msgsnd(msqid, &msg, MSG_SIZE, IPC_NOWAIT) == -1)
+            perror("msgsnd");
+    }
+}
 
 
 
@@ -140,7 +176,7 @@ int tryBookMinorMeeting(SharedData* pSharedData, int idMeeting) {
     --> Si des majors sur le crénaux
         --> Recommencer la recherche à la fin de ce dernier
 */
-int tryBookMajorMeeting(SharedData* pSharedData, int idMeeting) {
+int tryBookMajorMeeting(int msqid, SharedData* pSharedData, int idMeeting) {
     Meeting* meeting = &pSharedData->meetings[idMeeting];
 
     if(tryBookMinorMeeting(pSharedData, idMeeting))
@@ -208,9 +244,13 @@ int tryBookMajorMeeting(SharedData* pSharedData, int idMeeting) {
             if(!possible)
                 continue;
 
-            // Si il n'y a pas eu de souci de major, unbooker toutes les minors néscessiares
+            Meeting meetingsToMove[MAX_AMOUNT_MEETING];
+
+            // Libérer les mineures qui bloquent le créneau de la réunion majeure.
             for(int m=0 ; m<nbMeetingsToMove ; m++) {
+                meetingsToMove[m] = pSharedData->meetings[meetingsIdToMove[m]];
                 unBookMeeting(pSharedData, meetingsIdToMove[m]);
+                pSharedData->meetings[meetingsIdToMove[m]].roomId = NO_ROOM;
             }
 
             // Puis booker la salle pour la major
@@ -232,20 +272,31 @@ int tryBookMajorMeeting(SharedData* pSharedData, int idMeeting) {
                 }
             }
 
-            // Enfin, essayer de rebooker les minors qui ont été supprimé (potentiel annulation total, donc envoyer message au particpants pour les prévenir !)
+            // Replacer les réunions mineures et notifier les participants du résultat.
             for(int m=0 ; m<nbMeetingsToMove ; m++) {
+                int movedId = meetingsIdToMove[m];
 
-                if(!tryBookMinorMeeting(pSharedData, meetingsIdToMove[m])) {
-                    /*
-                     * TODO :
-                     * notifier annulation
-                     */
+                if(!tryBookMinorMeeting(pSharedData, movedId)) {
+                    notifyMeetingCancelled(msqid, pSharedData, movedId);
+                    if(pSharedData->nbMeetings > 0)
+                        pSharedData->nbMeetings--;
+
+                    char logMessage[128];
+                    snprintf(logMessage, sizeof(logMessage),
+                             "Reunion %d annulee (conflit avec une majeure)",
+                             movedId);
+                    addLog(pSharedData, logMessage);
                 }
                 else {
-                    /*
-                     * TODO :
-                     * notifier déplacement
-                     */
+                    notifyMeetingMoved(msqid, pSharedData, movedId);
+
+                    char logMessage[128];
+                    snprintf(logMessage, sizeof(logMessage),
+                             "Reunion %d deplacee de %dH a %dH",
+                             movedId,
+                             meetingsToMove[m].start + 8,
+                             pSharedData->meetings[movedId].start + 8);
+                    addLog(pSharedData, logMessage);
                 }
             }
             
@@ -268,16 +319,7 @@ int tryBookMajorMeeting(SharedData* pSharedData, int idMeeting) {
 // Notifier les particpants d'une réunion qu'elle a été supprimé (suite à une replanification à cause d'une major)
 void notifyMeetingCancelled(int msqid, SharedData* sharedData, int idMeeting) {
     Meeting* meeting = &sharedData->meetings[idMeeting];
-
-    for(int i=0 ; i<meeting->nbParticipants ; i++) {
-        Message msg;
-
-        msg.type = meeting->participantIds[i];
-        msg.requestType = NOTIFY_MEETING_CANCELLED; // Permet au membre de savoir que la réunion a été supprimée
-        msg.meeting = *meeting;
-
-        msgsnd(msqid, &msg, MSG_SIZE, 0);
-    }
+    notifyParticipants(msqid, meeting, NOTIFY_MEETING_CANCELLED);
 }
 
 
@@ -285,17 +327,7 @@ void notifyMeetingCancelled(int msqid, SharedData* sharedData, int idMeeting) {
 // Notifier les particpants d'une réunion qu'elle a été déplacé (suite à une replanification à cause d'une major)
 void notifyMeetingMoved(int msqid, SharedData* sharedData, int idMeeting) {
     Meeting* meeting = &sharedData->meetings[idMeeting];
-
-    for(int i=0 ; i<meeting->nbParticipants ; i++) {
-
-        Message msg;
-
-        msg.type = meeting->participantIds[i];
-        msg.requestType = NOTIFY_MEETING_MOVED; // Permet au membre de savoir que sa réunion a été déplacée
-        msg.meeting = *meeting;
-
-        msgsnd(msqid, &msg, MSG_SIZE, 0);
-    }
+    notifyParticipants(msqid, meeting, NOTIFY_MEETING_MOVED);
 }
 
 
@@ -304,16 +336,7 @@ void notifyMeetingMoved(int msqid, SharedData* sharedData, int idMeeting) {
 // Notifier les particpants d'une réunion qu'elle a été déplacé (suite à une demande de booking de réunion d'un membre)
 void notifyMeetingAccepted(int msqid, SharedData* sharedData, int idMeeting) {
     Meeting* meeting = &sharedData->meetings[idMeeting];
-
-    for(int i=0 ; i<meeting->nbParticipants ; i++) {
-        Message msg;
-
-        msg.type = meeting->participantIds[i];
-        msg.requestType = NOTIFY_BOOKING_SUCCESS; // Permet au membre de savoir que le booking a réussi
-        msg.meeting = *meeting;
-
-        msgsnd(msqid, &msg, MSG_SIZE, 0);
-    }
+    notifyParticipants(msqid, meeting, NOTIFY_BOOKING_SUCCESS);
 }
 
 
@@ -321,15 +344,7 @@ void notifyMeetingAccepted(int msqid, SharedData* sharedData, int idMeeting) {
 // Notifier les participants qu'il n'a pas été possible de booker la réunion
 void notifyMeetingRejected(int msqid, SharedData* sharedData, int idMeeting) {
     Meeting* meeting = &sharedData->meetings[idMeeting];
-
-    for(int i=0 ; i<meeting->nbParticipants ; i++) {
-        Message msg;
-        msg.type = meeting->participantIds[i];
-        msg.requestType = NOTIFY_BOOKING_FAILED;
-        msg.meeting = *meeting;
-
-        msgsnd(msqid, &msg, MSG_SIZE, 0);
-    }
+    notifyParticipants(msqid, meeting, NOTIFY_BOOKING_FAILED);
 }
 
 
@@ -345,28 +360,85 @@ void notifyMeetingRejected(int msqid, SharedData* sharedData, int idMeeting) {
 void gestionnaire(int msqid, SharedData* sharedData) {
     Message msg;
     while(1) {
-        msgrcv(msqid, &msg, MSG_SIZE, ASK_REUNION, 0);
+        if(msgrcv(msqid, &msg, MSG_SIZE, MANAGER_REQUEST_TYPE, 0) == -1) {
+            perror("msgrcv");
+            continue;
+        }
+
+        if(msg.requestType == DELETE_MEETING) {
+            int meetingId = msg.meeting.meetingId;
+            if(meetingId < 0 || meetingId >= MAX_AMOUNT_MEETING ||
+               sharedData->meetings[meetingId].roomId == NO_ROOM) {
+                addLog(sharedData, "Suppression impossible : reunion introuvable");
+                continue;
+            }
+
+            Meeting* meeting = &sharedData->meetings[meetingId];
+            unBookMeeting(sharedData, meetingId);
+            notifyMeetingCancelled(msqid, sharedData, meetingId);
+            meeting->roomId = NO_ROOM;
+            if(sharedData->nbMeetings > 0)
+                sharedData->nbMeetings--;
+
+            char logMessage[128];
+            snprintf(logMessage, sizeof(logMessage), "Reunion %d supprimee", meetingId);
+            addLog(sharedData, logMessage);
+            continue;
+        }
+
+        if(msg.requestType == STOP_MANAGER)
+            break;
+
+        if(msg.requestType != ASK_REUNION)
+            continue;
+
+        if(msg.meeting.nbParticipants < 1 ||
+           msg.meeting.nbParticipants > SIZE_BIGGEST_ROOM ||
+           (msg.meeting.priorityOrder != MINOR &&
+            msg.meeting.priorityOrder != MAJOR) ||
+           msg.meeting.duration < 1 ||
+           msg.meeting.duration > NB_HOURES_IN_A_DAY ||
+           (msg.meeting.start != UNSPECIFIED_START &&
+            (msg.meeting.start < 0 ||
+             msg.meeting.start > NB_HOURES_IN_A_DAY - msg.meeting.duration))) {
+            notifyParticipants(msqid, &msg.meeting, NOTIFY_BOOKING_FAILED);
+            addLog(sharedData, "Demande de reunion refusee (parametres invalides)");
+            continue;
+        }
+
+        if(sharedData->nextMeetingId < 0 ||
+           sharedData->nextMeetingId >= MAX_AMOUNT_MEETING) {
+            notifyParticipants(msqid, &msg.meeting, NOTIFY_BOOKING_FAILED);
+            addLog(sharedData, "Demande de reunion refusee (limite atteinte)");
+            continue;
+        }
+
+        msg.meeting.meetingId = sharedData->nextMeetingId++;
+        msg.meeting.roomId = NO_ROOM;
         sharedData->meetings[msg.meeting.meetingId] = msg.meeting;
 
-        if(msg.meeting.priorityOrder == MINOR) {
-            if(tryBookMinorMeeting(sharedData, msg.meeting.meetingId)) {
-                // Prévenir les participants que le booking a réussi
-                notifyMeetingAccepted(msqid, sharedData, msg.meeting.meetingId);
-            }
-            else {
-                // Prévenir les participants que le booking a échoué
-                notifyMeetingRejected(msqid, sharedData, msg.meeting.meetingId);
-            }
+        int booked;
+        if(msg.meeting.priorityOrder == MINOR)
+            booked = tryBookMinorMeeting(sharedData, msg.meeting.meetingId);
+        else
+            booked = tryBookMajorMeeting(msqid, sharedData, msg.meeting.meetingId);
+
+        char logMessage[128];
+        if(booked) {
+            notifyMeetingAccepted(msqid, sharedData, msg.meeting.meetingId);
+            sharedData->nbMeetings++;
+            snprintf(logMessage, sizeof(logMessage),
+                     "Reunion %d acceptee en salle %c a %dH",
+                     msg.meeting.meetingId,
+                     sharedData->meetings[msg.meeting.meetingId].roomId == ROOM_A_ID ? 'A' : 'B',
+                     sharedData->meetings[msg.meeting.meetingId].start + 8);
         }
         else {
-            if(tryBookMajorMeeting(sharedData, msg.meeting.meetingId)) {
-                // Prévenir les participants que le booking a réussi
-                notifyMeetingAccepted(msqid, sharedData, msg.meeting.meetingId);
-            }
-            else {
-                // Prévenir les participants que le booking a échoué
-                notifyMeetingRejected(msqid, sharedData, msg.meeting.meetingId);
-            }
+            notifyMeetingRejected(msqid, sharedData, msg.meeting.meetingId);
+            snprintf(logMessage, sizeof(logMessage),
+                     "Reunion %d refusee (aucun creneau disponible)",
+                     msg.meeting.meetingId);
         }
+        addLog(sharedData, logMessage);
     }
 }

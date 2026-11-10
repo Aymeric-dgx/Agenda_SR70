@@ -15,6 +15,7 @@
 
 #define FREE_SLOT -1 // Pour dire que la salle/membre est dispo, on mets -1 dans ses disponilité !
 
+#define MANAGER_REQUEST_TYPE 1000L
 #define MSG_SIZE (sizeof(Message) - sizeof(long))
 
 #define MAX_AMOUNT_MEETING 100
@@ -22,6 +23,8 @@
 #define UNSPECIFIED_START -1
 
 #define NO_ROOM -1
+
+#define MAX_LOGS 200
 
 
 typedef enum {
@@ -31,6 +34,8 @@ typedef enum {
 
 typedef enum {
     ASK_REUNION = 1,
+    DELETE_MEETING,
+    STOP_MANAGER,
 
     NOTIFY_BOOKING_SUCCESS,
     NOTIFY_BOOKING_FAILED,
@@ -48,11 +53,17 @@ typedef enum {
 
 
 
+// Pour stocker les messages pour l'historique UI
+typedef struct {
+    char message[128];
+} LogEntry;
+
+
 
 // Salle
 typedef struct {
     int roomId;
-    char name;
+    char name[16];
     int capacity;
     int disponibilites[NB_HOURES_IN_A_DAY]; // Ex : [1, 1, -1, -1, 2, 0, ...] ----> 8H-10H = Réunion n°1, 10H-12H : dispo, 12H-13H : Réunion n°2
 } Room;
@@ -108,6 +119,8 @@ typedef struct {
     Meeting meetings[MAX_AMOUNT_MEETING];
     int nbMeetings;
     int nextMeetingId;
+    LogEntry logs[MAX_LOGS];
+    int nbLogs;
 } SharedData;
 
 #endif

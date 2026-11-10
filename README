@@ -1,0 +1,21 @@
+Agenda SR70
+===========
+
+The application uses System V message queues/shared memory and SDL2, so it
+must be built and run on Linux.
+
+Install the required packages on Debian/Ubuntu:
+
+    sudo apt install build-essential libsdl2-dev libsdl2-ttf-dev fonts-dejavu-core
+
+Build from this directory:
+
+    gcc -std=c99 -Wall -Wextra -Wpedantic launcher.c gestionnaire.c member.c ui.c -lSDL2_ttf -lSDL2 -o agenda
+
+Run:
+
+    ./agenda
+
+The window contains the shared room schedule, team/member pages, meeting
+requests, meeting deletion, and the manager-maintained event history. Closing
+the window stops the manager and member child processes.

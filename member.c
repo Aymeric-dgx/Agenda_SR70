@@ -29,6 +29,9 @@ void checkNotifications(int msqid, int memberId) {
             case NOTIFY_MEETING_CANCELLED:
                 printf("[MEMBER %d] Réunion %d annulée\n", memberId, msg.meeting.meetingId);
                 break;
+
+            default:
+                break;
         }
     }
 }
@@ -38,9 +41,17 @@ void checkNotifications(int msqid, int memberId) {
 
 
 // Construction du meeting demandé + envoie au gestionnaire de la demande de booking de ce dernier
-void requestMeeting(int msqid, SharedData* sharedData,int memberId, Priority priorityOrder, int start, int duration, int nbParticipants, int participantsId[]) {
-    Meeting meeting;
-    meeting.meetingId = sharedData->nextMeetingId++;
+int requestMeeting(int msqid, int memberId, Priority priorityOrder, int start, int duration, int nbParticipants, int participantsId[]) {
+    if(nbParticipants < 1 || nbParticipants > SIZE_BIGGEST_ROOM ||
+       duration < 1 || duration > NB_HOURES_IN_A_DAY ||
+       (start != UNSPECIFIED_START &&
+        (start < 0 || start > NB_HOURES_IN_A_DAY - duration))) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    Meeting meeting = {0};
+    meeting.meetingId = UNSPECIFIED_START;
     meeting.priorityOrder = priorityOrder;
     meeting.duration = duration;
     meeting.start = start;
@@ -50,14 +61,18 @@ void requestMeeting(int msqid, SharedData* sharedData,int memberId, Priority pri
     }
     meeting.roomId = NO_ROOM; // Pas encore de salle assigné
 
-    Message msg;
-    msg.type = ASK_REUNION;
+    Message msg = {0};
+    msg.type = MANAGER_REQUEST_TYPE;
     msg.meeting = meeting;
     msg.requestType = ASK_REUNION;
 
-    msgsnd(msqid, &msg, MSG_SIZE, 0);
+    if(msgsnd(msqid, &msg, MSG_SIZE, IPC_NOWAIT) == -1) {
+        perror("msgsnd");
+        return -1;
+    }
 
-    printf("[MEMBER %d] Demande réunion %d\n", memberId, meeting.meetingId);
+    printf("[MEMBER %d] Demande de réunion envoyée\n", memberId);
+    return 0;
 }
 
 
@@ -75,6 +90,7 @@ Doit pouvoir :
     --> Continuer à "vivre" pendant toute la simulation.    
 */
 void member(int msqid, SharedData* sharedData, int memberId) {
+    (void)sharedData;
     srand(getpid());
 
     while(1) {
@@ -109,7 +125,7 @@ void member(int msqid, SharedData* sharedData, int memberId) {
         checkNotifications(msqid, memberId);
 
         if(rand()%100 < 10) {
-            requestMeeting(msqid, sharedData, memberId, priorityOrder, start, duration, nbParticipants, participantsId);
+            requestMeeting(msqid, memberId, priorityOrder, start, duration, nbParticipants, participantsId);
         }
 
         sleep(2);
