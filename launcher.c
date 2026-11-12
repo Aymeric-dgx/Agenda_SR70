@@ -2,6 +2,7 @@
 #include <sys/ipc.h>
 #include <sys/msg.h>
 #include <sys/shm.h>
+#include <sys/sem.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -29,6 +30,13 @@ int main() {
     if(shared == (void *)-1) {perror("shmat"); exit(EXIT_FAILURE);}
 
     memset(shared, 0, sizeof(*shared));
+
+    if(initializeSharedSemaphore(shared) == -1) {
+        shmdt(shared);
+        shmctl(shmid, IPC_RMID, NULL);
+        msgctl(msqid, IPC_RMID, NULL);
+        exit(EXIT_FAILURE);
+    }
 
     // Initialisation
     shared->nbMeetings = 4;
@@ -125,7 +133,10 @@ int main() {
     while(wait(NULL) > 0);
 
 
+    int semaphoreId = shared->semaphoreId;
     shmdt(shared);
+    if(semctl(semaphoreId, 0, IPC_RMID) == -1)
+        perror("semctl(IPC_RMID)");
     msgctl(msqid, IPC_RMID, NULL);
     shmctl(shmid, IPC_RMID, NULL);
 

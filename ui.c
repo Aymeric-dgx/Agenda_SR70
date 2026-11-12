@@ -953,13 +953,29 @@ void ui(int msqid, SharedData* sharedData) {
                 state.historyScroll -= event.wheel.y;
             }
             else {
+                if(lockSharedData(sharedData) == -1) {
+                    running = 0;
+                    break;
+                }
                 handleClick(&event, msqid, sharedData, &state, width, height);
+                if(unlockSharedData(sharedData) == -1) {
+                    running = 0;
+                    break;
+                }
             }
         }
+
+        if(!running)
+            break;
 
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);
         drawNavigation(renderer, font, state.page, width, height);
+
+        if(lockSharedData(sharedData) == -1) {
+            running = 0;
+            break;
+        }
 
         switch(state.page) {
             case PAGE_HOME:
@@ -974,6 +990,11 @@ void ui(int msqid, SharedData* sharedData) {
             case PAGE_TEAMS:
                 drawTeamsPage(renderer, font, sharedData, &state, width, height);
                 break;
+        }
+
+        if(unlockSharedData(sharedData) == -1) {
+            running = 0;
+            break;
         }
 
         // Presente a l'ecran l'image construite pour cette iteration.

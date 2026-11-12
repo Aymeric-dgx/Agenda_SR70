@@ -389,6 +389,17 @@ void gestionnaire(int msqid, SharedData* sharedData) {
             continue;
         }
 
+        // Le stop ne consulte ni ne modifie les donnees partagees.
+        if(msg.requestType == STOP_MANAGER)
+            break;
+
+        if(msg.requestType != DELETE_MEETING &&
+           msg.requestType != ASK_REUNION)
+            continue;
+
+        if(lockSharedData(sharedData) == -1)
+            continue;
+
         // Si le message est une demande de suppression de réunion
         if(msg.requestType == DELETE_MEETING) {
             int meetingId = msg.meeting.meetingId;
@@ -396,6 +407,7 @@ void gestionnaire(int msqid, SharedData* sharedData) {
             if(meetingId < 0 || meetingId >= MAX_AMOUNT_MEETING ||
                sharedData->meetings[meetingId].roomId == NO_ROOM) {
                 addLog(sharedData, "Suppression impossible : reunion introuvable");
+                unlockSharedData(sharedData);
                 continue;
             }
 
@@ -410,16 +422,9 @@ void gestionnaire(int msqid, SharedData* sharedData) {
             char logMessage[128];
             snprintf(logMessage, sizeof(logMessage), "Reunion %d supprimee", meetingId);
             addLog(sharedData, logMessage);
+            unlockSharedData(sharedData);
             continue;
         }
-
-        // Si le message est une demande de stop du gestionnaire, on quitte la boucle
-        if(msg.requestType == STOP_MANAGER)
-            break;
-
-        // Si le message n'est pas une demande de réunion, on ignore
-        if(msg.requestType != ASK_REUNION)
-            continue;
 
         // Si donc c'est une demande de réunion, on essaye de la booker
         // Vérifier les paramètres de la réunion demandée
@@ -434,6 +439,7 @@ void gestionnaire(int msqid, SharedData* sharedData) {
              msg.meeting.start > NB_HOURES_IN_A_DAY - msg.meeting.duration))) {
             notifyParticipants(msqid, &msg.meeting, NOTIFY_BOOKING_FAILED);
             addLog(sharedData, "Demande de reunion refusee (parametres invalides)");
+            unlockSharedData(sharedData);
             continue;
         }
 
@@ -442,6 +448,7 @@ void gestionnaire(int msqid, SharedData* sharedData) {
            sharedData->nextMeetingId >= MAX_AMOUNT_MEETING) {
             notifyParticipants(msqid, &msg.meeting, NOTIFY_BOOKING_FAILED);
             addLog(sharedData, "Demande de reunion refusee (limite atteinte)");
+            unlockSharedData(sharedData);
             continue;
         }
 
@@ -475,5 +482,6 @@ void gestionnaire(int msqid, SharedData* sharedData) {
                      msg.meeting.meetingId);
         }
         addLog(sharedData, logMessage);
+        unlockSharedData(sharedData);
     }
 }

@@ -120,6 +120,7 @@ typedef struct {
     int nextMeetingId;
     LogEntry logs[MAX_LOGS];
     int nbLogs;
+    int semaphoreId;
 } SharedData;
 
 #endif

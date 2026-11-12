@@ -5,6 +5,10 @@
 
 #include "commun.h"
 
+int initializeSharedSemaphore(SharedData* sharedData);
+int lockSharedData(const SharedData* sharedData);
+int unlockSharedData(const SharedData* sharedData);
+
 /* Gestionnaire */
 
 void gestionnaire(int msqid, SharedData* sharedData);
